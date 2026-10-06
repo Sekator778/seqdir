@@ -1,6 +1,7 @@
 package io.github.sekator778.seqdir;
 
 import java.io.IOException;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
@@ -57,7 +58,12 @@ import java.util.Objects;
  *    an empty file or an empty directory, with
  *    {@link Files#createFile} or {@link Files#createDirectory}. These fail
  *    with {@link FileAlreadyExistsException} if anything has that name.</li>
- *   <li>If the creation failed because the name exists, start over at 1.</li>
+ *   <li>If the creation failed because the name exists, start over at 1. So
+ *    does a creation that failed with {@link AccessDeniedException} while the
+ *    name exists or cannot be shown not to exist: Windows reports a name held
+ *    by an entry of the other kind, or by one that is being deleted, that
+ *    way. A denial on a name that does not exist is a real error and is
+ *    thrown.</li>
  *   <li>Scan again. If any other entry with the number N exists now, someone
  *    finished claiming N between our scan and our claim: delete the bare
  *    entry and start over at 1.</li>
@@ -183,6 +189,7 @@ public final class Seqdir {
         public Path next(final String name) throws IOException {
             this.check(name);
             this.prepare();
+            AccessDeniedException denied = null;
             for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
                 final long highest = this.highest();
                 if (highest >= MAX_NUMBER) {
@@ -196,6 +203,14 @@ public final class Seqdir {
                 try {
                     this.create(claim);
                 } catch (final FileAlreadyExistsException ex) {
+                    continue;
+                } catch (final AccessDeniedException ex) {
+                    // Windows reports a name taken by an entry of the other
+                    // kind, or by one being deleted, as access denied.
+                    if (Files.notExists(claim, LinkOption.NOFOLLOW_LINKS)) {
+                        throw ex;
+                    }
+                    denied = ex;
                     continue;
                 }
                 final boolean other;
@@ -224,7 +239,8 @@ public final class Seqdir {
                 String.format(
                     "no free number in %s after %d attempts",
                     this.dir, MAX_ATTEMPTS
-                )
+                ),
+                denied
             );
         }
 

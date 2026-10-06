@@ -3,10 +3,10 @@ package io.github.sekator778.seqdir;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -26,8 +26,9 @@ class ProcessesTest {
         final int each = 300;
         final Path shared = this.tmp.resolve("shared");
         final Path logs = Files.createDirectories(this.tmp.resolve("logs"));
-        final String java = System.getProperty("java.home")
-            + File.separator + "bin" + File.separator + "java";
+        final String java = Paths.get(
+            System.getProperty("java.home"), "bin", "java"
+        ).toString();
         final long start = System.currentTimeMillis() + 3000L;
         final List<Process> procs = new ArrayList<>();
         for (int id = 0; id < jvms; ++id) {

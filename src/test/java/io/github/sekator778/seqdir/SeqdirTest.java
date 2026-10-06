@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.Arrays;
 import java.util.Collections;
@@ -214,11 +215,32 @@ class SeqdirTest {
         assertFalse(Files.exists(base));
     }
 
+    /** Whether the platform accepts the name in a path (Windows refuses control characters). */
+    static boolean legalName(final String name) {
+        try {
+            Paths.get("0-" + name);
+            return true;
+        } catch (final InvalidPathException ex) {
+            return false;
+        }
+    }
+
+    /** A name the platform refuses is rejected up front and creates nothing. */
+    private void assertRejected(final Seqdir seq, final String name) throws Exception {
+        assertThrows(IllegalArgumentException.class, () -> seq.files().next(name));
+        assertThrows(IllegalArgumentException.class, () -> seq.dirs().next(name));
+        assertTrue(Entries.names(this.tmp).isEmpty(), "nothing created");
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"\n", "\r", "\r\n", "\u0085", "\u2028", "\u2029"})
     void lineTerminatorInNameDoesNotHideTheNumber(final String term) throws Exception {
         final Seqdir seq = new Seqdir(this.tmp, 3);
         final String name = "a" + term + "b";
+        if (!SeqdirTest.legalName(name)) {
+            this.assertRejected(seq, name);
+            return;
+        }
         final Path first = seq.files().next(name);
         assertEquals(this.tmp.resolve("001-" + name), first);
         Files.write(first, new byte[] {1, 2, 3, 4});
@@ -239,6 +261,10 @@ class SeqdirTest {
     void directoryWithLineTerminatorKeepsItsNumberForFiles(final String term) throws Exception {
         final Seqdir seq = new Seqdir(this.tmp, 3);
         final String name = "d" + term;
+        if (!SeqdirTest.legalName(name)) {
+            this.assertRejected(seq, name);
+            return;
+        }
         assertEquals(this.tmp.resolve("001-" + name), seq.dirs().next(name));
         assertEquals(this.tmp.resolve("002-f"), seq.files().next("f"));
     }

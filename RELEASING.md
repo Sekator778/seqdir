@@ -1,7 +1,9 @@
 # Releasing
 
-1. Set `<version>` in `pom.xml` to `X.Y.Z`, commit.
-2. Tag the commit `vX.Y.Z` and push the tag.
-3. The `release` workflow runs `mvn -B -P release deploy`, signs with the GPG key from the secrets and publishes to Maven Central.
-4. Check that `io.github.sekator778:seqdir:X.Y.Z` is visible on Maven Central.
-5. Set `<version>` in `pom.xml` to the next snapshot, for example `X.Y.(Z+1)-SNAPSHOT`, and commit.
+Releases are cut from the maintainer's machine.
+
+1. Set `<version>` in `pom.xml` to `X.Y.Z`, commit as `Release X.Y.Z`.
+2. Run `mvn -P release deploy`. It signs the artifacts with the maintainer's GPG key and publishes them to Maven Central.
+3. Check that `io.github.sekator778:seqdir:X.Y.Z` is on Maven Central.
+4. Tag the commit `vX.Y.Z`, push the tag and write the GitHub release.
+5. Set `<version>` in `pom.xml` to the next snapshot, commit.

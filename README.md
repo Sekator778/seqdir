@@ -20,8 +20,7 @@ Path second = seq.dirs().next("bar");      // /tmp/stages/002-bar, an empty dire
 </dependency>
 ```
 
-Java 8 or later, no dependencies. The first release, 0.1.0, is on its way to
-Maven Central.
+Java 8 or later, no dependencies.
 
 ## What it guarantees
 
@@ -64,6 +63,7 @@ different widths on one directory, and a deliberately naive implementation that
 the same tests must catch producing duplicates. Before the first release the
 jar was also driven as a black box on APFS, HFS+, ExFAT and FAT32, by processes
 on JDK 8 to 25 at the same time, and with `kill -9` in the middle of calls.
+CI runs the suite on Linux, macOS and Windows with JDK 11, 17, 21 and 25.
 
 ## License
 

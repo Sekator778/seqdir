@@ -59,11 +59,12 @@ import java.util.Objects;
  *    {@link Files#createFile} or {@link Files#createDirectory}. These fail
  *    with {@link FileAlreadyExistsException} if anything has that name.</li>
  *   <li>If the creation failed because the name exists, start over at 1. So
- *    does a creation that failed with {@link AccessDeniedException} while the
- *    name exists or cannot be shown not to exist: Windows reports a name held
- *    by an entry of the other kind, or by one that is being deleted, that
- *    way. A denial on a name that does not exist is a real error and is
- *    thrown.</li>
+ *    does a creation that failed with {@link AccessDeniedException}, because
+ *    Windows reports a name held by an entry of the other kind, or by one
+ *    that is being deleted, that way. Such a denial is retried while the base
+ *    directory is writable, at most {@value #MAX_DENIALS} times in one call;
+ *    then the last denial is thrown. A denial on a directory that is not
+ *    writable is a real error and is thrown at once.</li>
  *   <li>Scan again. If any other entry with the number N exists now, someone
  *    finished claiming N between our scan and our claim: delete the bare
  *    entry and start over at 1.</li>
@@ -103,6 +104,9 @@ public final class Seqdir {
 
     /** The most attempts one call of {@link Sequence#next(String)} makes. */
     static final int MAX_ATTEMPTS = 10_000;
+
+    /** The most access denials one call tolerates while claiming. */
+    private static final int MAX_DENIALS = 1_000;
 
     /** The most digits a number may have. */
     private static final int MAX_DIGITS = 18;
@@ -190,6 +194,7 @@ public final class Seqdir {
             this.check(name);
             this.prepare();
             AccessDeniedException denied = null;
+            int denials = 0;
             for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
                 final long highest = this.highest();
                 if (highest >= MAX_NUMBER) {
@@ -206,8 +211,11 @@ public final class Seqdir {
                     continue;
                 } catch (final AccessDeniedException ex) {
                     // Windows reports a name taken by an entry of the other
-                    // kind, or by one being deleted, as access denied.
-                    if (Files.notExists(claim, LinkOption.NOFOLLOW_LINKS)) {
+                    // kind, or by one being deleted, as access denied. While
+                    // the directory is writable that is contention: retry,
+                    // a bounded number of times.
+                    ++denials;
+                    if (!Files.isWritable(this.dir) || denials > MAX_DENIALS) {
                         throw ex;
                     }
                     denied = ex;

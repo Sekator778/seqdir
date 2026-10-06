@@ -400,7 +400,9 @@ class SeqdirTest {
         Files.setPosixFilePermissions(ro, PosixFilePermissions.fromString("r-xr-xr-x"));
         try {
             assumeTrue(!Files.isWritable(ro), "running with rights that ignore permissions");
+            final long start = System.nanoTime();
             assertThrows(IOException.class, () -> new Seqdir(ro, 3).files().next("x"));
+            assertTrue(System.nanoTime() - start < 500_000_000L, "fails fast");
             assertDoesNotThrow(() -> Entries.names(ro));
             assertTrue(Entries.names(ro).isEmpty());
         } finally {

@@ -2,6 +2,7 @@ package io.github.sekator778.seqdir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -106,9 +107,10 @@ class ConcurrencyTest {
     void namesWithLineFeedsStillGetDistinctNumbers() throws Exception {
         final Path dir = this.tmp.resolve("base");
         final Seqdir seq = new Seqdir(dir, 3);
-        if (!SeqdirTest.legalName("t0-0\n")) {
-            return; // Windows refuses a line feed in a path; SeqdirTest covers the rejection
-        }
+        assumeTrue(
+            SeqdirTest.legalName("t0-0\n"),
+            "the platform refuses a line feed in a path; SeqdirTest covers the rejection"
+        );
         final List<Path> got = Harness.run(
             Collections.singletonList(seq.files()),
             Collections.singletonList(seq.dirs()), 8, 50, "\n"

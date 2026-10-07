@@ -26,9 +26,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
 /** Names that look alike, a lock file that changes or is not a file, and entries that cannot be inspected. */
+@Timeout(value = 90, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
 class OnceEdgeTest {
 
     private static final String COMPOSED = "café";
@@ -95,8 +97,8 @@ class OnceEdgeTest {
         assertFalse(dirs.find("ab").isPresent());
     }
 
-    /** Starts a child that holds the lock file and returns it. */
-    private Process holder(final Path lockFile) throws Exception {
+    /** Starts a child that holds the lock file and returns it once it says so. */
+    static Process holder(final Path lockFile) throws Exception {
         final Process child = new ProcessBuilder(
             Paths.get(System.getProperty("java.home"), "bin", "java").toString(),
             "-cp", System.getProperty("java.class.path"),
@@ -105,14 +107,19 @@ class OnceEdgeTest {
         final BufferedReader out = new BufferedReader(
             new InputStreamReader(child.getInputStream(), StandardCharsets.UTF_8)
         );
-        assertEquals("locked", out.readLine());
+        try {
+            assertEquals("locked", out.readLine());
+        } catch (final Throwable ex) {
+            child.destroyForcibly();
+            throw ex;
+        }
         return child;
     }
 
     private void changedWhileWaiting(final boolean recreate) throws Exception {
         assumeFalse(OnceEdgeTest.windows(), "Windows does not delete a file that is locked");
         final Path lockFile = this.tmp.resolve(Seqdir.LOCK_FILE);
-        final Process child = this.holder(lockFile);
+        final Process child = OnceEdgeTest.holder(lockFile);
         final ExecutorService pool = Executors.newSingleThreadExecutor();
         try {
             final Future<Path> waiting = pool.submit(
@@ -129,7 +136,7 @@ class OnceEdgeTest {
             assertEquals(this.tmp.resolve("001-x"), waiting.get(60L, TimeUnit.SECONDS));
         } finally {
             pool.shutdownNow();
-            child.destroy();
+            child.destroyForcibly();
         }
         assertTrue(Files.isRegularFile(lockFile), "the lock file is there again");
         assertEquals(Collections.singletonList("001-x"), OnceEdgeTest.entries(this.tmp));

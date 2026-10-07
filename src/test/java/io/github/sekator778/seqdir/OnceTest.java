@@ -4,17 +4,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.io.IOException;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.io.InterruptedIOException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 import java.util.Collections;
@@ -24,11 +21,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+@Timeout(value = 90, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
 class OnceTest {
 
     @TempDir
@@ -286,23 +285,97 @@ class OnceTest {
     void interruptionWhileAnotherProcessHoldsTheFileLockEndsWithInterruptedIoException()
         throws Exception {
         final Path lockFile = this.tmp.resolve(Seqdir.LOCK_FILE);
-        final Process child = new ProcessBuilder(
-            Paths.get(System.getProperty("java.home"), "bin", "java").toString(),
-            "-cp", System.getProperty("java.class.path"),
-            LockMain.class.getName(), lockFile.toString()
-        ).redirectErrorStream(true).start();
+        final Process child = OnceEdgeTest.holder(lockFile);
         try {
-            final BufferedReader out = new BufferedReader(
-                new InputStreamReader(child.getInputStream(), StandardCharsets.UTF_8)
-            );
-            assertEquals("locked", out.readLine());
             this.assertInterrupted();
         } finally {
             child.getOutputStream().close();
-            assertTrue(child.waitFor(60L, TimeUnit.SECONDS), "the child ended");
+            if (!child.waitFor(60L, TimeUnit.SECONDS)) {
+                child.destroyForcibly();
+                fail("the child did not end");
+            }
         }
         assertEquals(0, child.exitValue());
         assertEquals(this.tmp.resolve("001-x"), new Seqdir(this.tmp, 3).dirs().once("x"));
+    }
+
+    @Test
+    void aWaiterProceedsSoonAfterTheHolderReleases() throws Exception {
+        final Path lockFile = this.tmp.resolve(Seqdir.LOCK_FILE);
+        final Process child = OnceEdgeTest.holder(lockFile);
+        final ExecutorService pool = Executors.newSingleThreadExecutor(
+            runnable -> {
+                final Thread thread = new Thread(runnable);
+                thread.setDaemon(true);
+                return thread;
+            }
+        );
+        try {
+            final Future<Path> waiting = pool.submit(
+                () -> new Seqdir(this.tmp, 3).dirs().once("x")
+            );
+            Thread.sleep(300L);
+            assertFalse(waiting.isDone(), "waits while the child holds the lock");
+            final long released = System.nanoTime();
+            child.getOutputStream().close();
+            assertEquals(this.tmp.resolve("001-x"), waiting.get(30L, TimeUnit.SECONDS));
+            final long millis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - released);
+            assertTrue(millis < 10_000L, "proceeded " + millis + " ms after the release");
+        } finally {
+            pool.shutdownNow();
+            child.destroyForcibly();
+        }
+    }
+
+    @Test
+    void aThreadWithTheInterruptFlagSetCannotCreateAndCreatesNothing() throws Exception {
+        final Path base = this.tmp.resolve("base");
+        Throwable failure = null;
+        boolean flag = false;
+        Thread.currentThread().interrupt();
+        try {
+            new Seqdir(base, 3).dirs().once("x");
+        } catch (final IOException | RuntimeException ex) {
+            failure = ex;
+            flag = Thread.currentThread().isInterrupted();
+        } finally {
+            Thread.interrupted();
+        }
+        assertTrue(failure instanceof InterruptedIOException, String.valueOf(failure));
+        assertTrue(flag, "the interrupt flag is still set");
+        assertFalse(Files.exists(base), "nothing created, not even the directory");
+    }
+
+    @Test
+    void aThreadInterruptedWhileWaitingForTheMonitorNoticesItAtTheFileLock()
+        throws Exception {
+        Files.createDirectories(this.tmp);
+        final Throwable[] failure = {null};
+        final boolean[] flag = {false};
+        final Thread waiter = new Thread(
+            () -> {
+                try {
+                    new Seqdir(this.tmp, 3).dirs().once("x");
+                } catch (final IOException | RuntimeException ex) {
+                    failure[0] = ex;
+                    flag[0] = Thread.currentThread().isInterrupted();
+                }
+            }
+        );
+        waiter.setDaemon(true);
+        synchronized (("io.github.sekator778.seqdir:" + this.tmp.toRealPath()).intern()) {
+            waiter.start();
+            Thread.sleep(300L);
+            assertTrue(waiter.isAlive(), "the thread waits for the monitor");
+            waiter.interrupt();
+            Thread.sleep(300L);
+            assertTrue(waiter.isAlive(), "waiting for the monitor is not interrupted");
+        }
+        waiter.join(30_000L);
+        assertFalse(waiter.isAlive(), "the thread ended");
+        assertTrue(failure[0] instanceof InterruptedIOException, String.valueOf(failure[0]));
+        assertTrue(flag[0], "the interrupt flag is still set");
+        assertFalse(Files.exists(this.tmp.resolve("001-x")), "nothing created");
     }
 
     @Test
@@ -331,6 +404,7 @@ class OnceTest {
                 }
             }
         );
+        waiter.setDaemon(true);
         waiter.start();
         Thread.sleep(300L);
         assertTrue(waiter.isAlive(), "the thread is waiting");

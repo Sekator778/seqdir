@@ -2,10 +2,8 @@ package io.github.sekator778.seqdir;
 
 import java.io.IOException;
 import java.io.InterruptedIOException;
-import java.nio.channels.ClosedByInterruptException;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
-import java.nio.channels.FileLockInterruptionException;
 import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.AtomicMoveNotSupportedException;
@@ -155,7 +153,7 @@ public final class Seqdir {
     /** The prefix of the monitor that {@code once} takes inside the JVM. */
     private static final String MONITOR = "io.github.sekator778.seqdir:";
 
-    /** How long {@code once} waits before it asks for a busy file lock again. */
+    /** How long {@code once} sleeps before it asks for a busy file lock again. */
     private static final long PAUSE = 10L;
 
     /** The most digits a number may have. */
@@ -331,6 +329,9 @@ public final class Seqdir {
             if (known.isPresent()) {
                 return known.get();
             }
+            if (Thread.currentThread().isInterrupted()) {
+                throw this.interrupted();
+            }
             this.prepare();
             // POSIX: closing any channel on a file releases every lock the
             // process holds on that file, so two channels on the lock file
@@ -421,31 +422,41 @@ public final class Seqdir {
         }
 
         /**
-         * Takes the file lock, waiting for as long as it is busy. A lock held
+         * Takes the file lock, polling for as long as it is busy: it asks for
+         * the lock without blocking, and between two asks sleeps, so that no
+         * native call blocks and an interrupt always reaches the thread (a
+         * blocking wait for a lock cannot be cancelled on every platform). A
+         * lock held by another process makes the ask return nothing; one held
          * by this JVM through another channel, which only code outside this
-         * library can have, is reported by the channel as an
-         * {@link OverlappingFileLockException}; that is contention, so it is
-         * asked for again after a pause, on the same channel. A thread that is
-         * interrupted while another process holds the lock gets a
-         * {@link FileLockInterruptionException}.
+         * library can have, makes it throw an
+         * {@link OverlappingFileLockException}. Both mean contention. A thread
+         * whose interrupt flag is set gets an {@link InterruptedIOException}
+         * before the first ask, and one that is interrupted while it sleeps
+         * gets it at once.
          *
          * @param channel the open lock file
          * @return the lock
          * @throws IOException if the file system cannot lock, or if the thread
-         *  is interrupted while it waits
+         *  is interrupted
          */
         private FileLock lock(final FileChannel channel) throws IOException {
+            if (Thread.currentThread().isInterrupted()) {
+                throw this.interrupted();
+            }
             while (true) {
+                FileLock lock;
                 try {
-                    return channel.lock();
+                    lock = channel.tryLock();
                 } catch (final OverlappingFileLockException ex) {
-                    try {
-                        Thread.sleep(PAUSE);
-                    } catch (final InterruptedException interrupt) {
-                        throw this.interrupted();
-                    }
-                } catch (final FileLockInterruptionException
-                    | ClosedByInterruptException ex) {
+                    // Held by this JVM through foreign code: contention too.
+                    lock = null;
+                }
+                if (lock != null) {
+                    return lock;
+                }
+                try {
+                    Thread.sleep(PAUSE);
+                } catch (final InterruptedException interrupt) {
                     throw this.interrupted();
                 }
             }

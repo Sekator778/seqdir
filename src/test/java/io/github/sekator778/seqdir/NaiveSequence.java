@@ -3,6 +3,7 @@ package io.github.sekator778.seqdir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Optional;
 
 /**
  * The obvious but wrong implementation: scan, take the highest number plus one
@@ -33,5 +34,15 @@ final class NaiveSequence implements Sequence {
             Files.createFile(path);
         }
         return path;
+    }
+
+    @Override
+    public Optional<Path> find(final String name) {
+        throw new UnsupportedOperationException("not needed by the harness");
+    }
+
+    @Override
+    public Path once(final String name) {
+        throw new UnsupportedOperationException("not needed by the harness");
     }
 }
